@@ -228,6 +228,7 @@ struct pingpong_context {
 	int 					fd;
 	#endif
 	struct memory_ctx			*memory;
+    int                     cur_buff_index;
 };
 
  struct pingpong_dest {
