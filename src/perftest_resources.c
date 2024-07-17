@@ -38,7 +38,7 @@ static enum ibv_wr_opcode opcode_atomic_array[] = {IBV_WR_ATOMIC_CMP_AND_SWP,IBV
 struct perftest_parameters* duration_param;
 struct check_alive_data check_alive_data;
 
-static inline int build_qp_wr(struct pingpong_context *ctx,
+static inline int build_qp_send_wr(struct pingpong_context *ctx,
 	struct perftest_parameters *user_param, struct pingpong_dest *rem_dest, int index);
 
 /******************************************************************************
@@ -684,7 +684,7 @@ static inline int post_send_method(struct pingpong_context *ctx, int index,
 		return (*ctx->new_post_send_work_request_func_pointer)(ctx, index, user_param);
 	#endif
 	struct ibv_send_wr 	*bad_wr = NULL;
-    build_qp_wr(ctx, user_param, NULL, index);
+    build_qp_send_wr(ctx, user_param, NULL, index);
 	return ibv_post_send(ctx->qp[index], &ctx->wr[index*user_param->post_list], &bad_wr);
 
 }
@@ -1010,6 +1010,8 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
     int buff_size_per_wr = 0;
     int buff_size_per_group = 0;
     int buff_size_per_qp = 0;
+    int buff_size_send = 0;
+    int buff_size_recv = 0;
 	ctx->cycle_buffer = user_param->cycle_buffer;
 	ctx->cache_line_size = user_param->cache_line_size;
 
@@ -1028,6 +1030,7 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 	ALLOC(ctx->dv_qp, struct mlx5dv_qp_ex*, user_param->num_of_qps);
 	#endif
 	ALLOC(ctx->r_dctn, uint32_t, user_param->num_of_qps);
+    ALLOC(ctx->group_index, uint64_t, user_param->num_of_qps);
 	#ifdef HAVE_DCS
 	ALLOC(ctx->dci_stream_id, uint32_t, user_param->num_of_qps);
 	#endif
@@ -1093,11 +1096,13 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 	 * with reference to number of flows and number of QPs
 	 */
 	// ctx->buff_size = INC(BUFF_SIZE(ctx->size, ctx->cycle_buffer), ctx->cache_line_size) * 2 * num_of_qps_factor * user_param->flows;
-    buff_size_per_wr    = INC(BUFF_SIZE(ctx->size, ctx->cycle_buffer), ctx->cache_line_size) * 2;
+    buff_size_per_wr    = INC(BUFF_SIZE(ctx->size, ctx->cycle_buffer), ctx->cache_line_size);
     buff_size_per_group = buff_size_per_wr * user_param->post_list;
     buff_size_per_qp    = buff_size_per_group * user_param->buff_group_num;
+    buff_size_send      = buff_size_per_qp * num_of_qps_factor * user_param->flows;
+    buff_size_recv      = buff_size_send;
 
-    ctx->buff_size = buff_size_per_qp * num_of_qps_factor * user_param->flows;
+    ctx->buff_size = buff_size_send * buff_size_recv; 
     ctx->cur_buff_index = 0;
 	ctx->send_qp_buff_size = ctx->buff_size / num_of_qps_factor / 2;
 	ctx->flow_buff_size = ctx->send_qp_buff_size / user_param->flows;
@@ -1105,8 +1110,11 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 	if (user_param->connection_type == UD)
 		ctx->buff_size += ctx->cache_line_size;
 
-    fprintf(stdout, "LICQ: ctx->buff_size(%ld), user_param->size(%ld), num_of_qps_factor(%d), user_param->flows(%d), ctx->cycle_buffer(%d)\n", 
-        ctx->buff_size, user_param->size, num_of_qps_factor, user_param->flows, ctx->cycle_buffer);
+    fprintf(stdout, "LICQ: buff_size_per_wr(%d), buff_size_per_group(%d), buff_size_per_qp(%d,%x)\n", 
+        buff_size_per_wr, buff_size_per_group, buff_size_per_qp, buff_size_per_qp);
+
+    fprintf(stdout, "LICQ: ctx->buff_size(%ld, %lx), user_param->size(%ld), num_of_qps_factor(%d), user_param->flows(%d), ctx->cycle_buffer(%d)\n", 
+         ctx->buff_size, ctx->buff_size, user_param->size, num_of_qps_factor, user_param->flows, ctx->cycle_buffer);
 
 	ctx->memory = user_param->memory_create(user_param);
 
@@ -2973,7 +2981,7 @@ static void ctx_post_send_work_request_func_pointer(struct pingpong_context *ctx
 #endif
 
 
-static inline int build_qp_wr(struct pingpong_context *ctx,
+static inline int build_qp_send_wr(struct pingpong_context *ctx,
         struct perftest_parameters *user_param, struct pingpong_dest *rem_dest, int qp_index)
 {
 	int j;
@@ -2994,7 +3002,7 @@ static inline int build_qp_wr(struct pingpong_context *ctx,
 		xrc_offset = num_of_qps;
 	}
 
-    buff_size_per_wr    = INC(BUFF_SIZE(ctx->size, ctx->cycle_buffer), ctx->cache_line_size) * 2;
+    buff_size_per_wr    = INC(BUFF_SIZE(ctx->size, ctx->cycle_buffer), ctx->cache_line_size);
     buff_size_per_group = buff_size_per_wr * user_param->post_list;
     buff_size_per_qp    = buff_size_per_group * user_param->buff_group_num;
 
@@ -3144,7 +3152,7 @@ void ctx_set_send_reg_wqes(struct pingpong_context *ctx,
             }
         }
 
-        build_qp_wr(ctx, user_param, rem_dest, qp_index);
+        build_qp_send_wr(ctx, user_param, rem_dest, qp_index);
 	}
 }
 
