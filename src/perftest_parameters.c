@@ -872,7 +872,7 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->has_source_ip	= 0;
 	user_param->use_write_with_imm	= 0;
 	user_param->congest_type	= OFF;
-    user_param->buff_num        = 1;
+    user_param->buff_group_num        = 1;
 }
 
 static int open_file_write(const char* file_path)
@@ -2666,7 +2666,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 				  } 
 #endif
                   buffer_num = (uint64_t)strtol(optarg, NULL, 0);
-                  user_param->buff_num = buffer_num;
+                  user_param->buff_group_num = buffer_num;
                   fprintf(stdout, "buffer_num = %d, optarg(%s)", buffer_num, optarg);
                   break;
 			case 'C':
