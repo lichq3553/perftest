@@ -1650,6 +1650,8 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 			fprintf(stderr, "Couldn't allocate MR\n");
 			return FAILURE;
 		}
+
+        fprintf(stdout, "%ld memory registered\n");
 	}
 
 	if (user_param->use_null_mr) {

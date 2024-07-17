@@ -11,6 +11,7 @@
 # Shared objects
 *.so
 *.so.*
+*.1
 
 # Dependencies
 .dirstamp
