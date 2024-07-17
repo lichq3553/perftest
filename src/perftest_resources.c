@@ -38,6 +38,9 @@ static enum ibv_wr_opcode opcode_atomic_array[] = {IBV_WR_ATOMIC_CMP_AND_SWP,IBV
 struct perftest_parameters* duration_param;
 struct check_alive_data check_alive_data;
 
+static inline int build_qp_wr(struct pingpong_context *ctx,
+	struct perftest_parameters *user_param, struct pingpong_dest *rem_dest, int index);
+
 /******************************************************************************
  * Beginning
  ******************************************************************************/
@@ -681,6 +684,7 @@ static inline int post_send_method(struct pingpong_context *ctx, int index,
 		return (*ctx->new_post_send_work_request_func_pointer)(ctx, index, user_param);
 	#endif
 	struct ibv_send_wr 	*bad_wr = NULL;
+    build_qp_wr(ctx, user_param, NULL, index);
 	return ibv_post_send(ctx->qp[index], &ctx->wr[index*user_param->post_list], &bad_wr);
 
 }
@@ -2969,27 +2973,14 @@ static void ctx_post_send_work_request_func_pointer(struct pingpong_context *ctx
 #endif
 
 
-/******************************************************************************
- *
- ******************************************************************************/
-void ctx_set_send_reg_wqes_qp(struct pingpong_context *ctx,
-		struct perftest_parameters *user_param,
-		struct pingpong_dest *rem_dest, int qp_index)
+static inline int build_qp_wr(struct pingpong_context *ctx,
+        struct perftest_parameters *user_param, struct pingpong_dest *rem_dest, int qp_index)
 {
-
-}
-
-/******************************************************************************
- *
- ******************************************************************************/
-void ctx_set_send_reg_wqes(struct pingpong_context *ctx,
-		struct perftest_parameters *user_param,
-		struct pingpong_dest *rem_dest)
-{
-	int i,j;
+	int j;
 	int num_of_qps = user_param->num_of_qps;
 	int xrc_offset = 0;
 	uint32_t remote_qkey;
+
     struct ibv_sge     *sge_arr = NULL, *cur_sge;
     struct ibv_send_wr *wr_arr = NULL, *cur_wr;
     int buff_size_per_wr = 0;
@@ -3007,143 +2998,153 @@ void ctx_set_send_reg_wqes(struct pingpong_context *ctx,
     buff_size_per_group = buff_size_per_wr * user_param->post_list;
     buff_size_per_qp    = buff_size_per_group * user_param->buff_group_num;
 
-	for (i = 0; i < num_of_qps; i++) {
-		if (user_param->connection_type == DC)
-		{
-			ctx->r_dctn[i] = rem_dest[xrc_offset + i].qpn;
-		}
+    if (user_param->connection_type == DC) {
+        ctx->r_dctn[qp_index] = rem_dest[xrc_offset + qp_index].qpn;
+    }
 
-        wr_arr = &ctx->wr[i * user_param->post_list];
-        sge_arr = &ctx->sge_list[i * user_param->post_list];
-		memset(&wr_arr[0], 0 ,sizeof(struct ibv_send_wr));
-        qp_buf    = ctx->buf[0] + buff_size_per_qp * i; // todo: user_param->mr_per_qp
-        group_buf = qp_buf + buff_size_per_group * ctx->group_index[i];
-        ctx->group_index[i]++;
+    wr_arr = &ctx->wr[qp_index * user_param->post_list];
+    sge_arr = &ctx->sge_list[qp_index * user_param->post_list];
+    memset(&wr_arr[0], 0 ,sizeof(struct ibv_send_wr));
 
-		if (user_param->mac_fwd) {
-			if (user_param->mr_per_qp) {
-				sge_arr[0].addr = (uintptr_t)group_buf; // ???
-			} else {
-				sge_arr[0].addr = (uintptr_t)group_buf;
-			}
-		}
+    qp_buf    = ctx->buf[0] + buff_size_per_qp * qp_index; // todo: user_param->mr_per_qp
+    group_buf = qp_buf + buff_size_per_group * (ctx->group_index[qp_index] / user_param->buff_group_num);
+    ctx->group_index[qp_index]++;
 
-		if (user_param->verb == WRITE || user_param->verb == WRITE_IMM || user_param->verb == READ)
-			wr_arr[0].wr.rdma.remote_addr   = rem_dest[xrc_offset + i].vaddr;
-		else if (user_param->verb == ATOMIC)
-			wr_arr[0].wr.atomic.remote_addr = rem_dest[xrc_offset + i].vaddr;
+    if (user_param->mac_fwd) {
+        if (user_param->mr_per_qp) {
+            sge_arr[0].addr = (uintptr_t)group_buf;
+        } else {
+            sge_arr[0].addr = (uintptr_t)group_buf;
+        }
+    }
 
-		if (user_param->tst == BW || user_param->tst == LAT_BY_BW) {
-			ctx->scnt[i] = 0;
-			ctx->ccnt[i] = 0;
-			ctx->my_addr[i] = (uintptr_t)ctx->buf[i];
-			if (user_param->verb != SEND)
-				ctx->rem_addr[i] = rem_dest[xrc_offset + i].vaddr;
-		}
+    if (user_param->verb == WRITE || user_param->verb == WRITE_IMM || user_param->verb == READ) {
+        wr_arr[0].wr.rdma.remote_addr   = rem_dest[xrc_offset + qp_index].vaddr;
+    } else if (user_param->verb == ATOMIC) {
+        wr_arr[0].wr.atomic.remote_addr = rem_dest[xrc_offset + qp_index].vaddr;
+    }
 
-		for (j = 0; j < user_param->post_list; j++) {
-            cur_sge = &sge_arr[j];
-            cur_wr  = &wr_arr[j];
+    for (j = 0; j < user_param->post_list; j++) {
+        cur_sge = &sge_arr[j];
+        cur_wr  = &wr_arr[j];
 
-            if (user_param->connection_type == RawEth) {
-                cur_sge->length =  user_param->size - HW_CRC_ADDITION;
-            } else {
-                cur_sge->length = user_param->size;
+        if (user_param->connection_type == RawEth) {
+            cur_sge->length =  user_param->size - HW_CRC_ADDITION;
+        } else {
+            cur_sge->length = user_param->size;
+        }
+
+        cur_sge->lkey  = ctx->mr[qp_index]->lkey;
+        if (user_param->use_null_mr) {
+            cur_sge->lkey = ctx->null_mr->lkey;
+        }
+
+        cur_sge->addr = (uintptr_t)group_buf + buff_size_per_wr * j;
+        // todo ???
+
+        cur_wr->sg_list = cur_sge;
+        cur_wr->num_sge = MAX_SEND_SGE;
+        cur_wr->wr_id   = qp_index;
+
+        if (j == (user_param->post_list - 1)) {
+            cur_wr->next = NULL;
+        } else {
+            cur_wr->next = cur_wr + 1;
+        }
+
+        if ((j + 1) % user_param->cq_mod == 0) {
+            cur_wr->send_flags = IBV_SEND_SIGNALED;
+        } else {
+            cur_wr->send_flags = 0;
+        }
+
+        if (user_param->verb == ATOMIC) {
+            cur_wr->opcode = opcode_atomic_array[user_param->atomicType];
+        } else {
+            cur_wr->opcode = opcode_verbs_array[user_param->verb];
+        }
+
+        if (user_param->verb == WRITE || user_param->verb == WRITE_IMM || user_param->verb == READ) {
+            cur_wr->wr.rdma.rkey = rem_dest[xrc_offset + qp_index].rkey;
+            if (user_param->connection_type == SRD)
+                ctx->rem_qpn[xrc_offset + qp_index] = rem_dest[xrc_offset + qp_index].qpn;
+            if (j > 0) {
+                cur_wr->wr.rdma.remote_addr = (cur_wr - 1)->wr.rdma.remote_addr;
+                if ((user_param->tst == BW || user_param->tst == LAT_BY_BW ) && user_param->size <= (ctx->cycle_buffer / 2)) {
+                    increase_rem_addr(cur_wr, user_param->size,
+                            j-1,ctx->rem_addr[qp_index],WRITE,ctx->cache_line_size,ctx->cycle_buffer);
+                }
+            }
+        } else if (user_param->verb == ATOMIC) {
+            cur_wr->wr.atomic.rkey = rem_dest[xrc_offset + qp_index].rkey;
+            if (j > 0) {
+                cur_wr->wr.atomic.remote_addr = (cur_wr - 1)->wr.atomic.remote_addr;
+                if (user_param->tst == BW || user_param->tst == LAT_BY_BW)
+                    increase_rem_addr(cur_wr, user_param->size,
+                            j-1,ctx->rem_addr[qp_index],ATOMIC,ctx->cache_line_size,ctx->cycle_buffer);
             }
 
-			cur_sge->lkey  = ctx->mr[i]->lkey;
-			if (user_param->use_null_mr) {
-				cur_sge->lkey = ctx->null_mr->lkey;
-			}
-
-#if 0       
-			if (j > 0) {
-
-				ctx->sge_list[i*user_param->post_list +j].addr = ctx->sge_list[i*user_param->post_list + (j-1)].addr;
-
-				if ((user_param->tst == BW || user_param->tst == LAT_BY_BW) && user_param->size <= (ctx->cycle_buffer / 2))
-					increase_loc_addr(&ctx->sge_list[i*user_param->post_list +j],user_param->size,
-							j-1,ctx->my_addr[i],0,ctx->cache_line_size,ctx->cycle_buffer);
-			}
-#else
-            cur_sge->addr = (uintptr_t)group_buf + buff_size_per_wr * j;
-            // todo ???
-#endif
-			cur_wr->sg_list = cur_sge;
-			cur_wr->num_sge = MAX_SEND_SGE;
-			cur_wr->wr_id   = i;
-
-			if (j == (user_param->post_list - 1)) {
-				cur_wr->next = NULL;
-			} else {
-				cur_wr->next = cur_wr + 1;
-			}
-
-			if ((j + 1) % user_param->cq_mod == 0) {
-				cur_wr->send_flags = IBV_SEND_SIGNALED;
-			} else {
-				cur_wr->send_flags = 0;
-			}
-
-			if (user_param->verb == ATOMIC) {
-				cur_wr->opcode = opcode_atomic_array[user_param->atomicType];
-			} else {
-				cur_wr->opcode = opcode_verbs_array[user_param->verb];
-			}
-
-			if (user_param->verb == WRITE || user_param->verb == WRITE_IMM || user_param->verb == READ) {
-				cur_wr->wr.rdma.rkey = rem_dest[xrc_offset + i].rkey;
-				if (user_param->connection_type == SRD)
-					ctx->rem_qpn[xrc_offset + i] = rem_dest[xrc_offset + i].qpn;
-				if (j > 0) {
-
-					cur_wr->wr.rdma.remote_addr =
-						(cur_wr - 1)->wr.rdma.remote_addr;
-
-					if ((user_param->tst == BW || user_param->tst == LAT_BY_BW ) && user_param->size <= (ctx->cycle_buffer / 2))
-						increase_rem_addr(cur_wr, user_param->size,
-								j-1,ctx->rem_addr[i],WRITE,ctx->cache_line_size,ctx->cycle_buffer);
-				}
-
-			} else if (user_param->verb == ATOMIC) {
-				cur_wr->wr.atomic.rkey = rem_dest[xrc_offset + i].rkey;
-
-				if (j > 0) {
-					cur_wr->wr.atomic.remote_addr = (cur_wr - 1)->wr.atomic.remote_addr;
-					if (user_param->tst == BW || user_param->tst == LAT_BY_BW)
-						increase_rem_addr(cur_wr, user_param->size,
-								j-1,ctx->rem_addr[i],ATOMIC,ctx->cache_line_size,ctx->cycle_buffer);
-				}
-
-				if (user_param->atomicType == FETCH_AND_ADD)
-					cur_wr->wr.atomic.compare_add = ATOMIC_ADD_VALUE;
-				else
-					cur_wr->wr.atomic.swap = ATOMIC_SWAP_VALUE;
-			} else if (user_param->verb == SEND) {
-				if (user_param->connection_type == UD || user_param->connection_type == SRD) {
-					cur_wr->wr.ud.ah = ctx->ah[i];
-					if (user_param->work_rdma_cm) {
-						ctx->rem_qpn[xrc_offset + i] = ctx->cma_master.nodes[i].remote_qpn;
-						remote_qkey = ctx->cma_master.nodes[i].remote_qkey;
-					} else {
-						ctx->rem_qpn[xrc_offset + i] = rem_dest[xrc_offset + i].qpn;
-						remote_qkey = DEF_QKEY;
-					}
-					cur_wr->wr.ud.remote_qkey = remote_qkey;
-					cur_wr->wr.ud.remote_qpn = ctx->rem_qpn[xrc_offset + i];
-				}
-			}
-
-			if ((user_param->verb == SEND || user_param->verb == WRITE || user_param->verb == WRITE_IMM) 
-                && user_param->size <= user_param->inline_size) {
-				cur_wr->send_flags |= IBV_SEND_INLINE;
+            if (user_param->atomicType == FETCH_AND_ADD)
+                cur_wr->wr.atomic.compare_add = ATOMIC_ADD_VALUE;
+            else
+                cur_wr->wr.atomic.swap = ATOMIC_SWAP_VALUE;
+        } else if (user_param->verb == SEND) {
+            if (user_param->connection_type == UD || user_param->connection_type == SRD) {
+                cur_wr->wr.ud.ah = ctx->ah[qp_index];
+                if (user_param->work_rdma_cm) {
+                    ctx->rem_qpn[xrc_offset + qp_index] = ctx->cma_master.nodes[qp_index].remote_qpn;
+                    remote_qkey = ctx->cma_master.nodes[qp_index].remote_qkey;
+                } else {
+                    ctx->rem_qpn[xrc_offset + qp_index] = rem_dest[xrc_offset + qp_index].qpn;
+                    remote_qkey = DEF_QKEY;
+                }
+                cur_wr->wr.ud.remote_qkey = remote_qkey;
+                cur_wr->wr.ud.remote_qpn = ctx->rem_qpn[xrc_offset + qp_index];
             }
+        }
 
-			#ifdef HAVE_XRCD
-			if (user_param->use_xrc)
-				cur_wr->qp_type.xrc.remote_srqn = rem_dest[xrc_offset + i].srqn;
-			#endif
-		}
+        if ((user_param->verb == SEND || user_param->verb == WRITE || user_param->verb == WRITE_IMM) 
+            && user_param->size <= user_param->inline_size) {
+            cur_wr->send_flags |= IBV_SEND_INLINE;
+        }
+
+        #ifdef HAVE_XRCD
+        if (user_param->use_xrc)
+            cur_wr->qp_type.xrc.remote_srqn = rem_dest[xrc_offset + qp_index].srqn;
+        #endif
+    }
+
+    return 0;
+}
+
+
+/******************************************************************************
+ *
+ ******************************************************************************/
+void ctx_set_send_reg_wqes(struct pingpong_context *ctx,
+		struct perftest_parameters *user_param,
+		struct pingpong_dest *rem_dest)
+{
+	int qp_index;
+	int num_of_qps = user_param->num_of_qps;
+	int xrc_offset = 0;
+
+	if ((user_param->use_xrc || user_param->connection_type == DC) && (user_param->duplex || user_param->tst == LAT)) {
+		num_of_qps /= 2;
+		xrc_offset = num_of_qps;
+	}
+
+	for (qp_index = 0; qp_index < num_of_qps; qp_index++) {
+        if (user_param->tst == BW || user_param->tst == LAT_BY_BW) {
+            ctx->scnt[qp_index] = 0;
+            ctx->ccnt[qp_index] = 0;
+            ctx->my_addr[qp_index] = (uintptr_t)ctx->buf[qp_index];  // ???
+            if (user_param->verb != SEND) {
+                ctx->rem_addr[qp_index] = rem_dest[xrc_offset + qp_index].vaddr;
+            }
+        }
+
+        build_qp_wr(ctx, user_param, rem_dest, qp_index);
 	}
 }
 
