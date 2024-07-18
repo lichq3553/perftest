@@ -872,7 +872,6 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->has_source_ip	= 0;
 	user_param->use_write_with_imm	= 0;
 	user_param->congest_type	= OFF;
-    user_param->buff_group_num        = 1;
 }
 
 static int open_file_write(const char* file_path)
@@ -2309,7 +2308,6 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int recv_post_list_flag = 0;
 	static int payload_flag = 0;
 	static int use_write_with_imm_flag = 0;
-    static int buffer_num = 1;
 	#ifdef HAVE_DCS
 	static int log_dci_streams_flag = 0;
 	static int log_active_dci_streams_flag = 0;
@@ -2373,7 +2371,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			{ .name = "rx-depth",		.has_arg = 1, .val = 'r' },
 			{ .name = "bidirectional",	.has_arg = 0, .val = 'b' },
 			{ .name = "cq-mod",		.has_arg = 1, .val = 'Q' },
-			{ .name = "buffer_num", 	.has_arg = 1, .val = 'N' },
+			{ .name = "noPeak",		.has_arg = 0, .val = 'N' },
 			{ .name = "version",		.has_arg = 0, .val = 'V' },
 			{ .name = "report-cycles",	.has_arg = 0, .val = 'C' },
 			{ .name = "report-histogrm",	.has_arg = 0, .val = 'H' },
@@ -2493,7 +2491,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			ALLOCATE(duplicates_checker, int, size_long_options);
 			memset(duplicates_checker, 0, size_long_options * sizeof(int));
 		}
-		c = getopt_long(argc,argv,"w:y:p:d:i:m:s:n:N:t:u:S:x:c:q:I:o:M:r:Q:A:l:D:f:B:T:L:E:J:j:K:k:X:W:aFegzRvhbVCHUOZP",long_options, &long_option_index);
+		c = getopt_long(argc,argv,"w:y:p:d:i:m:s:n:t:u:S:x:c:q:I:o:M:r:Q:A:l:D:f:B:T:L:E:J:j:K:k:X:W:aFegzRvhbNVCHUOZP",long_options, &long_option_index);
 
 		/* c == 0: the argumenet is a long option (example: --report_gbits) */
 		/* c > 0: the argument is a short option (example: -s/--size) */
@@ -2658,17 +2656,11 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 					  return FAILURE;
 				  } break;
 			case 'N': user_param->noPeak = ON;
-#if 0
 				  if (user_param->tst == LAT) {
 					  fprintf(stderr," NoPeak only valid for BW tests\n");
 					  free(duplicates_checker);
 					  return FAILURE;
-				  } 
-#endif
-                  buffer_num = (uint64_t)strtol(optarg, NULL, 0);
-                  user_param->buff_group_num = buffer_num;
-                  fprintf(stdout, "buffer_num = %d, optarg(%s)", buffer_num, optarg);
-                  break;
+				  } break;
 			case 'C':
 				  if (user_param->tst != LAT) {
 					  fprintf(stderr," Available only on Latency tests\n");
