@@ -3073,7 +3073,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 
 				if (buff_group_num_flag) {
 					CHECK_VALUE(user_param->buff_group_num, int, "buff_group_num", not_int_ptr);
-					fprintf(stdout, "LICQ: user_param->buff_group_num(%d)\n", user_param->buff_group_num);
+					fprintf(stdout, "LICQ: user_param->buff_group_num(%ld)\n", user_param->buff_group_num);
 					buff_group_num_flag = 0;
 				}
 

@@ -679,14 +679,15 @@ static int new_post_atomic_cs_sge_xrc(struct pingpong_context *ctx, int index,
 static inline int post_send_method(struct pingpong_context *ctx, int index,
 	struct perftest_parameters *user_param)
 {
-	#ifdef HAVE_IBV_WR_API
-	if (!user_param->use_old_post_send)
-		return (*ctx->new_post_send_work_request_func_pointer)(ctx, index, user_param);
-	#endif
 	struct ibv_send_wr 	*bad_wr = NULL;
     build_qp_send_wr(ctx, user_param, NULL, index);
-	return ibv_post_send(ctx->qp[index], &ctx->wr[index*user_param->post_list], &bad_wr);
 
+	#ifdef HAVE_IBV_WR_API
+	if (!user_param->use_old_post_send) {
+		return (*ctx->new_post_send_work_request_func_pointer)(ctx, index, user_param);
+	}
+	#endif
+	return ibv_post_send(ctx->qp[index], &ctx->wr[index*user_param->post_list], &bad_wr);
 }
 
 #ifdef HAVE_XRCD
@@ -1007,11 +1008,11 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 {
 	uint64_t tarr_size;
 	int num_of_qps_factor;
-    int buff_size_per_wr = 0;
-    int buff_size_per_group = 0;
-    int buff_size_per_qp = 0;
-    int buff_size_send = 0;
-    int buff_size_recv = 0;
+    uint64_t buff_size_per_wr = 0;
+    uint64_t buff_size_per_group = 0;
+    uint64_t buff_size_per_qp = 0;
+    uint64_t buff_size_send = 0;
+    uint64_t buff_size_recv = 0;
 	ctx->cycle_buffer = user_param->cycle_buffer;
 	ctx->cache_line_size = user_param->cache_line_size;
 
@@ -1111,10 +1112,10 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 	if (user_param->connection_type == UD)
 		ctx->buff_size += ctx->cache_line_size;
 
-    fprintf(stdout, "LICQ: buff_size_per_wr(%d), buff_size_per_group(%d), buff_size_per_qp(%d,%x)\n", 
-        buff_size_per_wr, buff_size_per_group, buff_size_per_qp, buff_size_per_qp);
+    fprintf(stdout, "LICQ: buff_size_per_wr(%ld), buff_size_per_group(%ld), buff_size_per_qp(%ld, 0x%lx), buff_size_send(%ld, 0x%lx)\n", 
+        buff_size_per_wr, buff_size_per_group, buff_size_per_qp, buff_size_per_qp, buff_size_send, buff_size_send);
 
-    fprintf(stdout, "LICQ: ctx->buff_size(%ld, %lx), user_param->size(%ld), num_of_qps_factor(%d), user_param->flows(%d), ctx->cycle_buffer(%d)\n", 
+    fprintf(stdout, "LICQ: ctx->buff_size(%ld, 0x%lx), user_param->size(%ld), num_of_qps_factor(%d), user_param->flows(%d), ctx->cycle_buffer(%d)\n", 
          ctx->buff_size, ctx->buff_size, user_param->size, num_of_qps_factor, user_param->flows, ctx->cycle_buffer);
 
 	ctx->memory = user_param->memory_create(user_param);
@@ -2050,7 +2051,7 @@ int ctx_init(struct pingpong_context *ctx, struct perftest_parameters *user_para
 		if (ctx_xrcd_create(ctx,user_param)) {
 			fprintf(stderr, "Couldn't create XRC resources\n");
 			goto cqs;
-		}
+		}	
 
 		if (ctx_xrc_srq_create(ctx,user_param)) {
 			fprintf(stderr, "Couldn't create SRQ XRC resources\n");
@@ -3052,8 +3053,9 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
 
         cur_sge->addr = (uintptr_t)group_buf + buff_size_per_wr * j;
         // todo ???
-		fprintf(stdout, "LICQ: qp_index[%d], group_index[%ld], wr[0x%p, 0x%p], len(%d)\n",
-				qp_index, ctx->group_index[qp_index],
+		static int iteration = 0;
+		fprintf(stdout, "LICQ: iteration[%4d], qp_index[%d], group_index[%ld, %ld], wr[0x%p, 0x%p], len(%d)\n",
+				iteration++, qp_index, ctx->group_index[qp_index], ctx->group_index[qp_index] % user_param->buff_group_num,	
 				(void *)cur_sge->addr, (void *)(cur_sge->addr + buff_size_per_wr), buff_size_per_wr);
 
         cur_wr->sg_list = cur_sge;
@@ -3542,6 +3544,8 @@ int run_iter_bw(struct pingpong_context *ctx,struct perftest_parameters *user_pa
 				if (user_param->test_type == DURATION && user_param->state == END_STATE)
 					break;
 
+				// static int iteration = 0;
+				// fprintf(stdout, "LICQ: iteration(%d)\n", iteration++);
 				err = post_send_method(ctx, index, user_param);
 				if (err) {
 					fprintf(stderr,"Couldn't post send: qp %d scnt=%lu \n",index,ctx->scnt[index]);
