@@ -1042,7 +1042,7 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 	ALLOC(ctx->mr, struct ibv_mr*, user_param->num_of_qps);
 	ALLOC(ctx->buf, void*, user_param->num_of_qps);
 
-	// memset(ctx->group_index, 0, user_param->num_of_qps * sizeof (uint64_t));
+	memset(ctx->group_index, 0, user_param->num_of_qps * sizeof (uint64_t));
 	if ((user_param->tst == BW || user_param->tst == LAT_BY_BW) && (user_param->machine == CLIENT || user_param->duplex)) {
 
 		ALLOC(user_param->tcompleted,cycles_t,tarr_size);
@@ -1674,7 +1674,6 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 			fprintf(stderr, "Couldn't allocate MR\n");
 			return FAILURE;
 		}
-
 
 		fprintf(stdout, "LICQ: ");
 		if (ctx->buff_size < 1024) {
@@ -3020,9 +3019,8 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
     memset(&wr_arr[0], 0 ,sizeof(struct ibv_send_wr));
 
     qp_buf    = ctx->buf[0] + buff_size_per_qp * qp_index; // todo: user_param->mr_per_qp
-    group_buf = qp_buf + buff_size_per_group * (ctx->group_index[qp_index] / user_param->buff_group_num);
-    ctx->group_index[qp_index]++;
-
+    group_buf = qp_buf + buff_size_per_group * (ctx->group_index[qp_index] % user_param->buff_group_num);
+    
     if (user_param->mac_fwd) {
         if (user_param->mr_per_qp) {
             sge_arr[0].addr = (uintptr_t)group_buf;
@@ -3054,6 +3052,9 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
 
         cur_sge->addr = (uintptr_t)group_buf + buff_size_per_wr * j;
         // todo ???
+		fprintf(stdout, "LICQ: qp_index[%d], group_index[%ld], wr[0x%p, 0x%p], len(%d)\n",
+				qp_index, ctx->group_index[qp_index],
+				(void *)cur_sge->addr, (void *)(cur_sge->addr + buff_size_per_wr), buff_size_per_wr);
 
         cur_wr->sg_list = cur_sge;
         cur_wr->num_sge = MAX_SEND_SGE;
@@ -3127,6 +3128,7 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
         #endif
     }
 
+	ctx->group_index[qp_index]++;
     return 0;
 }
 
