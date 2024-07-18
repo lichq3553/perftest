@@ -1675,17 +1675,19 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 			return FAILURE;
 		}
 
-        if (ctx->buff_size < 1024) {
-            fprintf(stderr, "%ld bytes memory registered", ctx->buff_size);
-        } else if ((ctx->buff_size > 1024) && (ctx->buff_size <= 1024 * 1024)) {
-            fprintf(stderr, "%ldKB memory registered", ctx->buff_size >> 10);
-        } else if ((ctx->buff_size > 1024 * 1024) && (ctx->buff_size <= 1024 * 1024 * 1024)) {
-            fprintf(stderr, "%ldMB memory registered", ctx->buff_size >> 20);
-        } else {
-            fprintf(stderr, "%ldGB memory registered", ctx->buff_size >> 30);
-        }
 
-		fprintf(stderr, ", [0x%p, 0x%p]\n",  ctx->buf[qp_index], (ctx->buf[qp_index] + ctx->buff_size));
+		fprintf(stdout, "LICQ: ");
+		if (ctx->buff_size < 1024) {
+			fprintf(stdout, "%ld bytes memory registered", ctx->buff_size);
+		} else if ((ctx->buff_size > 1024) && (ctx->buff_size <= 1024 * 1024)) {
+			fprintf(stdout, "%ldKB memory registered", ctx->buff_size >> 10);
+		} else if ((ctx->buff_size > 1024 * 1024) && (ctx->buff_size <= 1024 * 1024 * 1024)) {
+			fprintf(stdout, "%ldMB memory registered", ctx->buff_size >> 20);
+		} else {
+			fprintf(stdout, "%ldGB memory registered", ctx->buff_size >> 30);
+		}
+		fprintf(stdout, " [0x%p, 0x%p], qp_index(%d)\n",
+				ctx->buf[qp_index], (ctx->buf[qp_index] + ctx->buff_size), qp_index);
 	}
 
 	if (user_param->use_null_mr) {
