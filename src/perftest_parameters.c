@@ -872,6 +872,7 @@ static void init_perftest_params(struct perftest_parameters *user_param)
 	user_param->has_source_ip	= 0;
 	user_param->use_write_with_imm	= 0;
 	user_param->congest_type	= OFF;
+	user_param->buff_group_num  = 1;
 }
 
 static int open_file_write(const char* file_path)
@@ -2308,6 +2309,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 	static int recv_post_list_flag = 0;
 	static int payload_flag = 0;
 	static int use_write_with_imm_flag = 0;
+    static int buff_group_num_flag = 0;
 	#ifdef HAVE_DCS
 	static int log_dci_streams_flag = 0;
 	static int log_active_dci_streams_flag = 0;
@@ -2484,6 +2486,7 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 			#endif
 			{.name = "bind_source_ip", .has_arg = 1, .flag = &source_ip_flag, .val = 1},
 			{.name = "write_with_imm", .has_arg = 0, .flag = &use_write_with_imm_flag, .val = 1 },
+			{.name = "buff_group_num", .has_arg = 1, .flag = &buff_group_num_flag, .val = 1 },
 			{0}
 		};
 		if (!duplicates_checker) {
@@ -3067,6 +3070,13 @@ int parser(struct perftest_parameters *user_param,char *argv[], int argc)
 					CHECK_VALUE(user_param->recv_post_list,int,"Receive Post List size",not_int_ptr);
 					recv_post_list_flag = 0;
 				}
+
+				if (buff_group_num_flag) {
+					CHECK_VALUE(user_param->buff_group_num, int, "buff_group_num", not_int_ptr);
+					fprintf(stdout, "LICQ: user_param->buff_group_num(%d)\n", user_param->buff_group_num);
+					buff_group_num_flag = 0;
+				}
+
 				#ifdef HAVE_AES_XTS
 				if (aes_xts_flag) {
 					user_param->aes_xts = 1;
