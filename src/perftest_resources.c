@@ -1042,6 +1042,7 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 	ALLOC(ctx->mr, struct ibv_mr*, user_param->num_of_qps);
 	ALLOC(ctx->buf, void*, user_param->num_of_qps);
 
+	// memset(ctx->group_index, 0, user_param->num_of_qps * sizeof (uint64_t));
 	if ((user_param->tst == BW || user_param->tst == LAT_BY_BW) && (user_param->machine == CLIENT || user_param->duplex)) {
 
 		ALLOC(user_param->tcompleted,cycles_t,tarr_size);
@@ -1102,7 +1103,7 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
     buff_size_send      = buff_size_per_qp * num_of_qps_factor * user_param->flows;
     buff_size_recv      = buff_size_send;
 
-    ctx->buff_size = buff_size_send * buff_size_recv; 
+    ctx->buff_size = buff_size_send + buff_size_recv;
     ctx->cur_buff_index = 0;
 	ctx->send_qp_buff_size = ctx->buff_size / num_of_qps_factor / 2;
 	ctx->flow_buff_size = ctx->send_qp_buff_size / user_param->flows;
@@ -1675,14 +1676,16 @@ int create_single_mr(struct pingpong_context *ctx, struct perftest_parameters *u
 		}
 
         if (ctx->buff_size < 1024) {
-            fprintf(stderr, "%ld bytes memory registered\n", ctx->buff_size);
+            fprintf(stderr, "%ld bytes memory registered", ctx->buff_size);
         } else if ((ctx->buff_size > 1024) && (ctx->buff_size <= 1024 * 1024)) {
-            fprintf(stderr, "%ldKB memory registered\n", ctx->buff_size >> 10);
+            fprintf(stderr, "%ldKB memory registered", ctx->buff_size >> 10);
         } else if ((ctx->buff_size > 1024 * 1024) && (ctx->buff_size <= 1024 * 1024 * 1024)) {
-            fprintf(stderr, "%ldMB memory registered\n", ctx->buff_size >> 20);
+            fprintf(stderr, "%ldMB memory registered", ctx->buff_size >> 20);
         } else {
-            fprintf(stderr, "%ldGB memory registered\n", ctx->buff_size >> 30);
+            fprintf(stderr, "%ldGB memory registered", ctx->buff_size >> 30);
         }
+
+		fprintf(stderr, ", [0x%p, 0x%p]\n",  ctx->buf[qp_index], (ctx->buf[qp_index] + ctx->buff_size));
 	}
 
 	if (user_param->use_null_mr) {
