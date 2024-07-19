@@ -102,7 +102,7 @@
 
 #define NOTIFY_COMP_ERROR_SEND(wc,scnt,ccnt)                     											\
 	{ fprintf(stderr," Completion with error at client\n");      											\
-	  fprintf(stderr," Failed status %d: wr_id %d syndrom 0x%x\n",wc.status,(int) wc.wr_id,wc.vendor_err);	\
+	  fprintf(stderr," Failed status %d: wr_id %d:%d syndrom 0x%x\n",wc.status, (int)(wc.wr_id >> 32), (int) wc.wr_id, wc.vendor_err);	\
 	  fprintf(stderr, "scnt=%lu, ccnt=%lu\n",scnt, ccnt); }
 
 #define NOTIFY_COMP_ERROR_RECV(wc,rcnt)                     											    \

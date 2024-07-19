@@ -2986,6 +2986,9 @@ static void ctx_post_send_work_request_func_pointer(struct pingpong_context *ctx
 #endif
 
 
+/******************************************************************************
+ *
+ ******************************************************************************/
 static inline int build_qp_send_wr(struct pingpong_context *ctx,
         struct perftest_parameters *user_param, struct pingpong_dest *rem_dest, int qp_index)
 {
@@ -2996,11 +2999,15 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
 
     struct ibv_sge     *sge_arr = NULL, *cur_sge;
     struct ibv_send_wr *wr_arr = NULL, *cur_wr;
-    int buff_size_per_wr = 0;
-    int buff_size_per_group = 0;
-    int buff_size_per_qp    = 0;
+    uint64_t buff_size_per_wr = 0;
+    uint64_t buff_size_per_group = 0;
+    uint64_t buff_size_per_qp    = 0;
     void *qp_buf = NULL;
     void *group_buf = NULL;
+
+	if (user_param->buff_group_num == 1) {
+		goto out;
+	}
 
 	if((user_param->use_xrc || user_param->connection_type == DC) && (user_param->duplex || user_param->tst == LAT)) {
 		num_of_qps /= 2;
@@ -3053,14 +3060,15 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
 
         cur_sge->addr = (uintptr_t)group_buf + buff_size_per_wr * j;
         // todo ???
-		static int iteration = 0;
-		fprintf(stdout, "LICQ: iteration[%4d], qp_index[%d], group_index[%ld, %ld], wr[0x%p, 0x%p], len(%d)\n",
-				iteration++, qp_index, ctx->group_index[qp_index], ctx->group_index[qp_index] % user_param->buff_group_num,	
+		static uint64_t iteration = 0;
+		fprintf(stdout, "LICQ: iteration[%4ld], qp_index[%4d], group_index[%4ld, %4ld], wr[0x%p, 0x%p], len(%ld)\n",
+				iteration, qp_index, ctx->group_index[qp_index] % user_param->buff_group_num, ctx->group_index[qp_index],
 				(void *)cur_sge->addr, (void *)(cur_sge->addr + buff_size_per_wr), buff_size_per_wr);
 
         cur_wr->sg_list = cur_sge;
         cur_wr->num_sge = MAX_SEND_SGE;
-        cur_wr->wr_id   = qp_index;
+        cur_wr->wr_id   = (iteration << 32) | qp_index;
+		iteration++;
 
         if (j == (user_param->post_list - 1)) {
             cur_wr->next = NULL;
@@ -3131,6 +3139,7 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
     }
 
 	ctx->group_index[qp_index]++;
+out:
     return 0;
 }
 
@@ -3164,6 +3173,7 @@ void ctx_set_send_reg_wqes(struct pingpong_context *ctx,
         build_qp_send_wr(ctx, user_param, rem_dest, qp_index);
 	}
 }
+
 
 /******************************************************************************
  *
@@ -3611,6 +3621,8 @@ int run_iter_bw(struct pingpong_context *ctx,struct perftest_parameters *user_pa
 				if (ne > 0) {
 					for (i = 0; i < ne; i++) {
 						wc_id = (int)wc[i].wr_id;
+
+						wc_id &= 0xffffffff;
 
 						if (wc[i].status != IBV_WC_SUCCESS) {
 							NOTIFY_COMP_ERROR_SEND(wc[i],totscnt,totccnt);
