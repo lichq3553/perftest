@@ -1031,7 +1031,8 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 	ALLOC(ctx->dv_qp, struct mlx5dv_qp_ex*, user_param->num_of_qps);
 	#endif
 	ALLOC(ctx->r_dctn, uint32_t, user_param->num_of_qps);
-    ALLOC(ctx->group_index, uint64_t, user_param->num_of_qps);
+    ALLOC(ctx->send_group_index, uint64_t, user_param->num_of_qps);
+	ALLOC(ctx->recv_group_index, uint64_t, user_param->num_of_qps);
 	#ifdef HAVE_DCS
 	ALLOC(ctx->dci_stream_id, uint32_t, user_param->num_of_qps);
 	#endif
@@ -1043,7 +1044,8 @@ int alloc_ctx(struct pingpong_context *ctx,struct perftest_parameters *user_para
 	ALLOC(ctx->mr, struct ibv_mr*, user_param->num_of_qps);
 	ALLOC(ctx->buf, void*, user_param->num_of_qps);
 
-	memset(ctx->group_index, 0, user_param->num_of_qps * sizeof (uint64_t));
+	memset(ctx->send_group_index, 0, user_param->num_of_qps * sizeof (uint64_t));
+	memset(ctx->recv_group_index, 0, user_param->num_of_qps * sizeof (uint64_t));
 	if ((user_param->tst == BW || user_param->tst == LAT_BY_BW) && (user_param->machine == CLIENT || user_param->duplex)) {
 
 		ALLOC(user_param->tcompleted,cycles_t,tarr_size);
@@ -1839,7 +1841,7 @@ int create_mr(struct pingpong_context *ctx, struct perftest_parameters *user_par
 			// cppcheck-suppress arithOperationsOnVoidPointer
 			// ctx->buf[i] = ctx->buf[0] + (i*BUFF_SIZE(ctx->size, ctx->cycle_buffer));
             buff_size_per_qp = INC(BUFF_SIZE(ctx->size, ctx->cycle_buffer), ctx->cache_line_size) * 2 * 
-                    user_param->post_list * user_param->buff_group_num;
+                    user_param->post_list * user_param->buff_group_num;  // LICQ: todo
             ctx->buf[i] = ctx->buf[0] + buff_size_per_qp * i;
 		}
 	}
@@ -2998,7 +3000,7 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
 	uint32_t remote_qkey;
 
     struct ibv_sge     *sge_arr = NULL, *cur_sge;
-    struct ibv_send_wr *wr_arr = NULL, *cur_wr;
+    struct ibv_send_wr *send_wr_arr = NULL, *cur_send_wr;
     uint64_t buff_size_per_wr = 0;
     uint64_t buff_size_per_group = 0;
     uint64_t buff_size_per_qp    = 0;
@@ -3006,7 +3008,12 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
     void *group_buf = NULL;
 
 	if (user_param->buff_group_num == 1) {
-		goto out;
+		static int send_wr_built = 0;
+		if (send_wr_built != 0) {
+			goto out;
+		} else {
+			send_wr_built = 1;
+		}
 	}
 
 	if((user_param->use_xrc || user_param->connection_type == DC) && (user_param->duplex || user_param->tst == LAT)) {
@@ -3022,13 +3029,13 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
         ctx->r_dctn[qp_index] = rem_dest[xrc_offset + qp_index].qpn;
     }
 
-    wr_arr = &ctx->wr[qp_index * user_param->post_list];
+    send_wr_arr = &ctx->wr[qp_index * user_param->post_list];
     sge_arr = &ctx->sge_list[qp_index * user_param->post_list];
-    memset(&wr_arr[0], 0 ,sizeof(struct ibv_send_wr));
+    memset(&send_wr_arr[0], 0 ,sizeof(struct ibv_send_wr));
 
     qp_buf    = ctx->buf[0] + buff_size_per_qp * qp_index; // todo: user_param->mr_per_qp
-    group_buf = qp_buf + buff_size_per_group * (ctx->group_index[qp_index] % user_param->buff_group_num);
-    
+    group_buf = qp_buf + buff_size_per_group * (ctx->send_group_index[qp_index] % user_param->buff_group_num);
+
     if (user_param->mac_fwd) {
         if (user_param->mr_per_qp) {
             sge_arr[0].addr = (uintptr_t)group_buf;
@@ -3038,14 +3045,14 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
     }
 
     if (user_param->verb == WRITE || user_param->verb == WRITE_IMM || user_param->verb == READ) {
-        wr_arr[0].wr.rdma.remote_addr   = rem_dest[xrc_offset + qp_index].vaddr;
+        send_wr_arr[0].wr.rdma.remote_addr   = rem_dest[xrc_offset + qp_index].vaddr;
     } else if (user_param->verb == ATOMIC) {
-        wr_arr[0].wr.atomic.remote_addr = rem_dest[xrc_offset + qp_index].vaddr;
+        send_wr_arr[0].wr.atomic.remote_addr = rem_dest[xrc_offset + qp_index].vaddr;
     }
 
     for (j = 0; j < user_param->post_list; j++) {
         cur_sge = &sge_arr[j];
-        cur_wr  = &wr_arr[j];
+        cur_send_wr  = &send_wr_arr[j];
 
         if (user_param->connection_type == RawEth) {
             cur_sge->length =  user_param->size - HW_CRC_ADDITION;
@@ -3061,60 +3068,60 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
         cur_sge->addr = (uintptr_t)group_buf + buff_size_per_wr * j;
         // todo ???
 		static uint64_t iteration = 0;
-		fprintf(stdout, "LICQ: iteration[%4ld], qp_index[%4d], group_index[%4ld, %4ld], wr[0x%p, 0x%p], len(%ld)\n",
-				iteration, qp_index, ctx->group_index[qp_index] % user_param->buff_group_num, ctx->group_index[qp_index],
+		fprintf(stdout, "LICQ: iteration[%4ld], qp_index[%4d], send_group_index[%4ld, %4ld], wr[0x%p, 0x%p], len(%ld)\n",
+				iteration, qp_index, ctx->send_group_index[qp_index] % user_param->buff_group_num, ctx->send_group_index[qp_index],
 				(void *)cur_sge->addr, (void *)(cur_sge->addr + buff_size_per_wr), buff_size_per_wr);
 
-        cur_wr->sg_list = cur_sge;
-        cur_wr->num_sge = MAX_SEND_SGE;
-        cur_wr->wr_id   = (iteration << 32) | qp_index;
+        cur_send_wr->sg_list = cur_sge;
+        cur_send_wr->num_sge = MAX_SEND_SGE;
+        cur_send_wr->wr_id   = (iteration << 32) | qp_index;
 		iteration++;
 
         if (j == (user_param->post_list - 1)) {
-            cur_wr->next = NULL;
+            cur_send_wr->next = NULL;
         } else {
-            cur_wr->next = cur_wr + 1;
+            cur_send_wr->next = cur_send_wr + 1;
         }
 
         if ((j + 1) % user_param->cq_mod == 0) {
-            cur_wr->send_flags = IBV_SEND_SIGNALED;
+            cur_send_wr->send_flags = IBV_SEND_SIGNALED;
         } else {
-            cur_wr->send_flags = 0;
+            cur_send_wr->send_flags = 0;
         }
 
         if (user_param->verb == ATOMIC) {
-            cur_wr->opcode = opcode_atomic_array[user_param->atomicType];
+            cur_send_wr->opcode = opcode_atomic_array[user_param->atomicType];
         } else {
-            cur_wr->opcode = opcode_verbs_array[user_param->verb];
+            cur_send_wr->opcode = opcode_verbs_array[user_param->verb];
         }
 
         if (user_param->verb == WRITE || user_param->verb == WRITE_IMM || user_param->verb == READ) {
-            cur_wr->wr.rdma.rkey = rem_dest[xrc_offset + qp_index].rkey;
+            cur_send_wr->wr.rdma.rkey = rem_dest[xrc_offset + qp_index].rkey;
             if (user_param->connection_type == SRD)
                 ctx->rem_qpn[xrc_offset + qp_index] = rem_dest[xrc_offset + qp_index].qpn;
             if (j > 0) {
-                cur_wr->wr.rdma.remote_addr = (cur_wr - 1)->wr.rdma.remote_addr;
+                cur_send_wr->wr.rdma.remote_addr = (cur_send_wr - 1)->wr.rdma.remote_addr;
                 if ((user_param->tst == BW || user_param->tst == LAT_BY_BW ) && user_param->size <= (ctx->cycle_buffer / 2)) {
-                    increase_rem_addr(cur_wr, user_param->size,
+                    increase_rem_addr(cur_send_wr, user_param->size,
                             j-1,ctx->rem_addr[qp_index],WRITE,ctx->cache_line_size,ctx->cycle_buffer);
                 }
             }
         } else if (user_param->verb == ATOMIC) {
-            cur_wr->wr.atomic.rkey = rem_dest[xrc_offset + qp_index].rkey;
+            cur_send_wr->wr.atomic.rkey = rem_dest[xrc_offset + qp_index].rkey;
             if (j > 0) {
-                cur_wr->wr.atomic.remote_addr = (cur_wr - 1)->wr.atomic.remote_addr;
+                cur_send_wr->wr.atomic.remote_addr = (cur_send_wr - 1)->wr.atomic.remote_addr;
                 if (user_param->tst == BW || user_param->tst == LAT_BY_BW)
-                    increase_rem_addr(cur_wr, user_param->size,
+                    increase_rem_addr(cur_send_wr, user_param->size,
                             j-1,ctx->rem_addr[qp_index],ATOMIC,ctx->cache_line_size,ctx->cycle_buffer);
             }
 
             if (user_param->atomicType == FETCH_AND_ADD)
-                cur_wr->wr.atomic.compare_add = ATOMIC_ADD_VALUE;
+                cur_send_wr->wr.atomic.compare_add = ATOMIC_ADD_VALUE;
             else
-                cur_wr->wr.atomic.swap = ATOMIC_SWAP_VALUE;
+                cur_send_wr->wr.atomic.swap = ATOMIC_SWAP_VALUE;
         } else if (user_param->verb == SEND) {
             if (user_param->connection_type == UD || user_param->connection_type == SRD) {
-                cur_wr->wr.ud.ah = ctx->ah[qp_index];
+                cur_send_wr->wr.ud.ah = ctx->ah[qp_index];
                 if (user_param->work_rdma_cm) {
                     ctx->rem_qpn[xrc_offset + qp_index] = ctx->cma_master.nodes[qp_index].remote_qpn;
                     remote_qkey = ctx->cma_master.nodes[qp_index].remote_qkey;
@@ -3122,23 +3129,23 @@ static inline int build_qp_send_wr(struct pingpong_context *ctx,
                     ctx->rem_qpn[xrc_offset + qp_index] = rem_dest[xrc_offset + qp_index].qpn;
                     remote_qkey = DEF_QKEY;
                 }
-                cur_wr->wr.ud.remote_qkey = remote_qkey;
-                cur_wr->wr.ud.remote_qpn = ctx->rem_qpn[xrc_offset + qp_index];
+                cur_send_wr->wr.ud.remote_qkey = remote_qkey;
+                cur_send_wr->wr.ud.remote_qpn = ctx->rem_qpn[xrc_offset + qp_index];
             }
         }
 
         if ((user_param->verb == SEND || user_param->verb == WRITE || user_param->verb == WRITE_IMM) 
             && user_param->size <= user_param->inline_size) {
-            cur_wr->send_flags |= IBV_SEND_INLINE;
+            cur_send_wr->send_flags |= IBV_SEND_INLINE;
         }
 
         #ifdef HAVE_XRCD
         if (user_param->use_xrc)
-            cur_wr->qp_type.xrc.remote_srqn = rem_dest[xrc_offset + qp_index].srqn;
+            cur_send_wr->qp_type.xrc.remote_srqn = rem_dest[xrc_offset + qp_index].srqn;
         #endif
     }
 
-	ctx->group_index[qp_index]++;
+	ctx->send_group_index[qp_index]++;
 out:
     return 0;
 }
@@ -3178,6 +3185,105 @@ void ctx_set_send_reg_wqes(struct pingpong_context *ctx,
 /******************************************************************************
  *
  ******************************************************************************/
+static inline int build_qp_recv_wr(struct pingpong_context *ctx,
+        struct perftest_parameters *user_param, struct pingpong_dest *rem_dest, int qp_index)
+{
+	int			j;
+	int			num_of_qps = user_param->num_of_qps;
+	int			size_per_qp = user_param->rx_depth / user_param->recv_post_list;
+	int mtu = MTU_SIZE(user_param->curr_mtu);
+	uint64_t length = user_param->use_srq == ON ? (((SIZE(user_param->connection_type ,user_param->size, 1) + mtu - 1 )/ mtu) * mtu) : SIZE(user_param->connection_type, user_param->size, 1);
+    struct ibv_sge     *sge_arr = NULL, *cur_sge;
+    struct ibv_recv_wr *recv_wr_arr = NULL, *cur_recv_wr;
+	// struct ibv_recv_wr	*bad_wr_recv;
+    uint64_t buff_size_per_wr    = 0;
+    uint64_t buff_size_per_group = 0;
+    uint64_t buff_size_per_qp    = 0;
+	uint64_t buff_size_send      = 0;
+    void *qp_recv_buf = NULL;
+    void *group_buf = NULL;
+
+	if (user_param->buff_group_num == 1) {
+		static int send_wr_built = 0;
+		if (send_wr_built != 0) {
+			goto out;
+		} else {
+			send_wr_built = 1;
+		}
+	}
+
+    buff_size_per_wr    = INC(BUFF_SIZE(ctx->size, ctx->cycle_buffer), ctx->cache_line_size);
+    buff_size_per_group = buff_size_per_wr * user_param->post_list;
+    buff_size_per_qp    = buff_size_per_group * user_param->buff_group_num;
+    buff_size_send      = buff_size_per_qp * num_of_qps * user_param->flows;
+
+	// LICQ: todo if (!user_param->mr_per_qp) {
+    qp_recv_buf = ctx->buf[0] + buff_size_send + buff_size_per_qp * qp_index; // todo: user_param->mr_per_qp
+    group_buf   = qp_recv_buf + buff_size_per_group * (ctx->recv_group_index[qp_index] % user_param->buff_group_num);
+    
+	if((user_param->use_xrc || user_param->connection_type == DC) &&
+				(user_param->duplex || user_param->tst == LAT)) {
+		qp_index = user_param->num_of_qps / 2;  // todo
+		num_of_qps /= 2;
+	}
+
+	if (user_param->use_srq) {
+		size_per_qp /= user_param->num_of_qps;
+	}
+	ctx->rposted = size_per_qp * user_param->recv_post_list;
+
+	// for (k = 0; i < user_param->num_of_qps; i++,k++) {
+	{
+        recv_wr_arr = &ctx->rwr[user_param->recv_post_list * qp_index];
+        sge_arr     = &ctx->recv_sge_list[user_param->recv_post_list * qp_index];
+
+		sge_arr[0].addr = (uintptr_t)group_buf;
+		if (user_param->connection_type == UD) {
+			sge_arr[0].addr += (ctx->cache_line_size - UD_ADDITION);
+		}
+
+		ctx->rx_buffer_addr[qp_index] = sge_arr[0].addr;
+
+		for (j = 0; j < user_param->recv_post_list; j++) {
+			cur_sge = &sge_arr[j];
+			cur_recv_wr  = &recv_wr_arr[j];
+
+			cur_sge->length = length;
+			cur_sge->lkey   = ctx->mr[qp_index]->lkey;
+
+			if (j > 0) {
+				cur_sge->addr = (cur_sge - 1)->addr;
+				if ((user_param->tst == BW || user_param->tst == LAT_BY_BW) && user_param->size <= (ctx->cycle_buffer / 2)) {
+					increase_loc_addr(cur_sge,
+							user_param->size,
+							j,
+							ctx->rx_buffer_addr[qp_index],
+							user_param->connection_type,ctx->cache_line_size,ctx->cycle_buffer);
+				}
+			}
+
+			cur_recv_wr->sg_list = cur_sge;
+			cur_recv_wr->num_sge = MAX_RECV_SGE;
+			cur_recv_wr->wr_id   = qp_index;
+			if (j == (user_param->recv_post_list - 1)) {
+				cur_recv_wr->next = NULL;
+			} else {
+				cur_recv_wr->next = cur_recv_wr + 1;
+			}
+		}
+
+		sge_arr[0].addr = ctx->rx_buffer_addr[qp_index];
+	}
+
+	ctx->recv_group_index[qp_index]++;
+out:
+	return 0;
+}
+
+
+/******************************************************************************
+ *
+ ******************************************************************************/
 int ctx_set_recv_wqes(struct pingpong_context *ctx,struct perftest_parameters *user_param)
 {
 	int			i = 0,j,k;
@@ -3187,7 +3293,7 @@ int ctx_set_recv_wqes(struct pingpong_context *ctx,struct perftest_parameters *u
 	int mtu = MTU_SIZE(user_param->curr_mtu);
 	uint64_t length = user_param->use_srq == ON ? (((SIZE(user_param->connection_type ,user_param->size, 1) + mtu - 1 )/ mtu) * mtu) : SIZE(user_param->connection_type, user_param->size, 1);
     // struct ibv_sge     *sge_arr = NULL, *cur_sge;
-    // struct ibv_recv_wr *wr_arr = NULL, *cur_wr;
+    // struct ibv_recv_wr *send_wr_arr = NULL, *cur_send_wr;
     // int buff_size_per_wr = 0;
 
     // buff_size_per_wr = INC(BUFF_SIZE(ctx->size, ctx->cycle_buffer), ctx->cache_line_size) * 2;
@@ -3202,7 +3308,7 @@ int ctx_set_recv_wqes(struct pingpong_context *ctx,struct perftest_parameters *u
 	ctx->rposted = size_per_qp * user_param->recv_post_list;
 
 	for (k = 0; i < user_param->num_of_qps; i++,k++) {
-        // wr_arr = &ctx->wr[i * user_param->post_list];
+        // send_wr_arr = &ctx->wr[i * user_param->post_list];
         // sge_arr = &ctx->sge_list[i * user_param->post_list];
 
 		if (!user_param->mr_per_qp) {
